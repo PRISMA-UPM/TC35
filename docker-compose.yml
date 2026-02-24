@@ -1,11 +1,11 @@
 services:
     
-  ai-catalog:
+  ai-repository:
     build:
-      context: ./ai-catalog
+      context: ./ai-repository
     network_mode: "host"
-    image: ai-catalog
-    container_name: ai-catalog
+    image: ai-repository
+    container_name: ai-repository
     ports:
       - "9200:9200"
     healthcheck:
@@ -26,6 +26,21 @@ services:
     pull_policy: build
     volumes:
       - ./model-upload/files/models/:/usr/app/src/models/
+
+  ai-training:
+    build:
+      context: ./ai-training
+    network_mode: "host"
+    image: ai-training
+    container_name: ai-training
+    depends_on:
+      ai-repository:
+        condition: service_healthy
+      model-upload:
+        condition: service_started
+    pull_policy: build
+    volumes:
+      - ./ai-training/data/:/usr/app/src/data/
 
   kafka:
     image: "bitnami/kafka:latest"
@@ -60,7 +75,7 @@ services:
     network_mode: "host"
     image: ai-inference
     depends_on:
-      ai-catalog:
+      ai-repository:
         condition: service_healthy
       model-upload:
         condition: service_started
