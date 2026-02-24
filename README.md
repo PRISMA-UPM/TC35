@@ -1,37 +1,43 @@
-# Code Repository for the Paper "On the Applicability of Network Digital Twins in Generating Synthetic Data for Heavy Hitter Discrimination"
+# ACROSS TC3.5 — Network Digital Twin for Heavy Hitter Discrimination
 
 ## Table of Contents
 
-1. [Abstract](#abstract)
-2. [Citation](#citation)
-3. [System Architecture](#system-architecture)
-4. [Installation](#installation)
-5. [Usage](#usage)
-6. [Experimental Setup](#experimental-setup)
+1. [About](#about)
+2. [Related Publication](#related-publication)
+3. [Citation](#citation)
+4. [System Architecture](#system-architecture)
+5. [Installation](#installation)
+6. [Usage](#usage)
+7. [Experimental Setup](#experimental-setup)
     - [Data Generation](#data-generation)
     - [Scenario Configuration and Deployment](#scenario-configuration-and-deployment)
     - [Data Collection, Preprocessing, and Labeling](#data-collection-preprocessing-and-labeling)
-7. [Machine Learning Model Development and Evaluation](#machine-learning-model-development-and-evaluation)
-8. [Solution Deployment](#solution-deployment)
-9. [APIs](#apis)
-10. [Message Formats](#message-formats)
-11. [Logging and Monitoring](#logging-and-monitoring)
-12. [Environment Variables](#environment-variables)
-13. [File Structure](#file-structure)
-14. [Reproducibility](#reproducibility)
-15. [Contact](#contact)
+8. [Machine Learning Model Development and Evaluation](#machine-learning-model-development-and-evaluation)
+9. [Solution Deployment](#solution-deployment)
+10. [APIs](#apis)
+11. [Message Formats](#message-formats)
+12. [Logging and Monitoring](#logging-and-monitoring)
+13. [Environment Variables](#environment-variables)
+14. [File Structure](#file-structure)
+15. [Reproducibility](#reproducibility)
+16. [Contact](#contact)
 
 ---
 
-## Abstract
+## About
 
-This repository accompanies the paper titled "**On the Applicability of Network Digital Twins in Generating Synthetic Data for Heavy Hitter Discrimination**", published in IEEE Communications Magazine ([https://doi.org/10.1109/MCOM.003.2400648](https://doi.org/10.1109/MCOM.003.2400648)). If you use the data or code from this repository in your research, please cite this paper.
+This repository contains the code for **Test Case 3.5 (TC3.5)** developed under **Work Package 4 (WP4)** of the [**ACROSS**](https://across-he.eu/) European research project, funded by the **Horizon Europe** programme. The TC3.5 use case focuses on the applicability of Network Digital Twins (NDTs) for generating synthetic network traffic data to train and validate machine learning models for heavy hitter discrimination — distinguishing between normal traffic, benign heavy hitters, and malicious heavy hitters (e.g., DDoS attacks).
 
-The study presents an NDT framework designed to emulate realistic network environments for generating labeled synthetic traffic data for developing machine learning models. The framework is validated through a novel use case involving heavy hitter discrimination, both benign and malicious (e.g., DDoS attacks). The framework leverages orchestration technologies and automated deployment workflows to ensure reproducibility, extensibility and scalability to facilitate network security research and experimentation.
+The framework presented here leverages orchestration technologies and automated deployment workflows to create reproducible, extensible, and scalable network environments for security research and experimentation.
+
+### Related Publication
+
+This work accompanies the paper titled "**On the Applicability of Network Digital Twins in Generating Synthetic Data for Heavy Hitter Discrimination**", published in IEEE Communications Magazine ([https://doi.org/10.1109/MCOM.003.2400648](https://doi.org/10.1109/MCOM.003.2400648)). If you use the data or code from this repository in your research, please cite this paper.
 
 Co-authors: **Amit Karamchandani, Alberto Mozo, Luis de la Cal** (Universidad Politécnica de Madrid); **Javier Nuñez, Yenny Moreno, Antonio Pastor** (Telefónica Innovación Digital).
 
 With special support from **Diego R. López** (Telefónica Innovación Digital).
+
 
 
 ---

@@ -1,0 +1,13 @@
+httplib2==0.14.0
+influxdb-client==1.42.0
+joblib==1.4.2
+kafka-python==2.0.2
+numpy==1.24.4
+protobuf==3.6.1
+reactivex==4.0.4
+requests==2.31.0
+requests-unixsocket==0.2.0
+six==1.14.0
+typing-extensions==4.11.0
+urllib3==2.2.1
+websocket-client==0.53.0

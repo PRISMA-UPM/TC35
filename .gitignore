@@ -1,2 +1,6 @@
 *.pcap
 *.joblib
+
+# Generated output data
+telemetry/files/output_csv/
+ai-training/data/
