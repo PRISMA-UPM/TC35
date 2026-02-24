@@ -469,7 +469,7 @@ All services are deployed using Docker Compose. Follow the streamlined steps bel
    ```bash
    docker-compose up -d
    ```  
-   This command will build (if not already built) and start all services, including `ai-repository`, `ai-inference`, `ai-training`, `data_aggregator`, `model-upload`, `kafka`, and `telemetry`, in detached mode.
+   This command will build (if not already built) and start all services, including `ai-repository`, `ai-inference`, `ai-training`, `data_aggregator`, `model-upload`, `kafka`, and `intelligent-telemetry`, in detached mode.
 
 2. **Verify Deployment**  
    Check the status of all services to ensure they are running correctly:  
@@ -484,7 +484,7 @@ All services are deployed using Docker Compose. Follow the streamlined steps bel
    - **AI Inference**: Handles data classification  
    - **AI Detector**: Assigns final classes based on inference probabilities  
    - **AI Training**: Trains ML models using `ai_training.py`  
-   - **Telemetry**: Collects and visualizes results on a Grafana dashboard for real-time monitoring.
+   - **Intelligent Telemetry**: Collects and visualizes results on a Grafana dashboard for real-time monitoring.
 
 4. **Access Grafana Dashboard**  
    Open your browser and navigate to `http://localhost:3000`. Log in with the default credentials (`admin/admin`) and configure your dashboards to visualize relevant metrics.
@@ -668,7 +668,7 @@ Communication between the **ai-*** components and other services primarily occur
     
     - **Description**: Topic to which the AI Inference service publishes classification probabilities.
     - **Producer**: `ai-inference`
-    - **Consumer**: `ai-detector`, `telemetry`
+    - **Consumer**: `ai-detector`, `intelligent-telemetry`
 3. **training_data**:
     
     - **Description**: Topic from which the AI Training service consumes preprocessed traffic data for model training.
@@ -944,7 +944,7 @@ Below is a comprehensive list of all relevant custom environment variables used 
 - `THRESHOLDS_CONFIG="/config/thresholds.yaml"`
 - `TZ="Europe/Madrid"`
 
-### Telemetry
+### Intelligent Telemetry
 
 - `KAFKA_URL="localhost:9094"`
 - `CONSUMER_TOPIC="predicted_labels"`
@@ -976,7 +976,7 @@ across-tc-3.5-network-detection/
 │   │   └── requirements.txt
 │   ├── data/
 │   └── Dockerfile
-├── telemetry
+├── intelligent-telemetry
 │   ├── files
 │   │   ├── telemetry_prueba_intervalos.py
 │   │   └── requirements.txt
@@ -1050,11 +1050,11 @@ across-tc-3.5-network-detection/
     - **files/ai_training.py**: Flask-based service that exposes `/train` and `/retrain` API endpoints for model training and publishing to the ai-repository.
     - **Dockerfile**: Builds the AI Training Docker image, installs dependencies, and sets environment variables for Elasticsearch integration.
     - **data/**: Mount point for training and validation CSV datasets.
-- **telemetry/**
+- **intelligent-telemetry/**
     
-    - **files/requirements.txt**: Lists Python dependencies required for the Telemetry service.
+    - **files/requirements.txt**: Lists Python dependencies required for the Intelligent Telemetry service.
     - **files/telemetry_prueba_intervalos.py**: Kafka consumer that collects classification results and stores them in InfluxDB for monitoring.
-    - **Dockerfile**: Builds the Telemetry Docker image with Kafka and InfluxDB integration.
+    - **Dockerfile**: Builds the Intelligent Telemetry Docker image with Kafka and InfluxDB integration.
 - **data_aggregator/**
     
     - **nfstream/**

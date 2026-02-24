@@ -2,5 +2,5 @@
 *.joblib
 
 # Generated output data
-telemetry/files/output_csv/
+intelligent-telemetry/files/output_csv/
 ai-training/data/
