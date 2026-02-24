@@ -458,7 +458,7 @@ Ensure that the training and testing datasets are correctly specified in the con
 6. **AI Training Service**:
     
     - **Purpose**: Trains machine learning models using collected and preprocessed data.
-    - **Functionality**: Consumes training data from Kafka, trains the ML model using `train.py`, and uploads the trained model to the ai-catalog.
+    - **Functionality**: Trains the ML model using `ai_training.py` and uploads the trained model to the ai-repository.
 
 ### Deployment Steps
 
@@ -469,7 +469,7 @@ All services are deployed using Docker Compose. Follow the streamlined steps bel
    ```bash
    docker-compose up -d
    ```  
-   This command will build (if not already built) and start all services, including `ai-catalog`, `ai-inference`, `ai-training`, `ai-detector`, `data_aggregator`, `model-upload`, `kafka`, and `ai-monitoring`, in detached mode.
+   This command will build (if not already built) and start all services, including `ai-repository`, `ai-inference`, `ai-training`, `data_aggregator`, `model-upload`, `kafka`, and `telemetry`, in detached mode.
 
 2. **Verify Deployment**  
    Check the status of all services to ensure they are running correctly:  
@@ -479,12 +479,12 @@ All services are deployed using Docker Compose. Follow the streamlined steps bel
    You should see all services listed as `Up`.
 
 3. **Access Services**  
-   - **Elasticsearch (ai-catalog)**: `http://localhost:9200`  
+   - **Elasticsearch (ai-repository)**: `http://localhost:9200`  
    - **Kafka**: Accessible on ports `9094` (External) and `9092` (Internal)  
    - **AI Inference**: Handles data classification  
    - **AI Detector**: Assigns final classes based on inference probabilities  
-   - **AI Training**: Trains ML models using `train.py`  
-   - **Grafana (ai-monitoring)**: `http://localhost:3000`
+   - **AI Training**: Trains ML models using `ai_training.py`  
+   - **Telemetry**: Collects and visualizes results on a Grafana dashboard for real-time monitoring.
 
 4. **Access Grafana Dashboard**  
    Open your browser and navigate to `http://localhost:3000`. Log in with the default credentials (`admin/admin`) and configure your dashboards to visualize relevant metrics.
@@ -556,7 +556,7 @@ Detailed logs are essential for tracing system behavior and diagnosing issues. F
 
 #### Log Aggregation
 
-Logs from all components are aggregated and stored locally within each container. While advanced log management and visualization can be achieved using tools like the ELK Stack (Elasticsearch, Logstash, Kibana), direct log ingestion and analysis through ELK is not currently provided in this repository. However, integration with Elasticsearch is supported through the ai-catalog service for those who wish to set up their own ELK environment.
+Logs from all components are aggregated and stored locally within each container. While advanced log management and visualization can be achieved using tools like the ELK Stack (Elasticsearch, Logstash, Kibana), direct log ingestion and analysis through ELK is not currently provided in this repository. However, integration with Elasticsearch is supported through the ai-repository service for those who wish to set up their own ELK environment.
 
 ---
 
@@ -573,11 +573,11 @@ The AI Inference component processes incoming traffic data and classifies it usi
 - **Model Management**
     
     - **GET /models**
-        - **Description**: Retrieves a list of available models from the ai-catalog.
+        - **Description**: Retrieves a list of available models from the ai-repository.
         - **Parameters**: None
         - **Response**: JSON array of model metadata.
     - **POST /models/{model_id}**
-        - **Description**: Loads a specific model by its ID from the ai-catalog.
+        - **Description**: Loads a specific model by its ID from the ai-repository.
         - **Parameters**:
             - `model_id` (path parameter): The ID of the model to load.
         - **Response**: JSON status message indicating success or failure.
@@ -609,7 +609,7 @@ The AI Training component handles the training of machine learning models using 
 - **Model Retrieval**
     
     - **GET /trained-models**
-        - **Description**: Retrieves a list of trained models available in the ai-catalog.
+        - **Description**: Retrieves a list of trained models available in the ai-repository.
         - **Parameters**: None
         - **Response**: JSON array of trained model metadata.
 
@@ -636,13 +636,13 @@ Currently, the AI Detector API does not implement authentication. Future iterati
 
 ### Model Upload API
 
-The Model Upload component provides an interface for uploading trained machine learning models to the ai-catalog.
+The Model Upload component provides an interface for uploading trained machine learning models to the ai-repository.
 
 #### Endpoints
 
 - **Model Upload**
     - **POST /upload**
-        - **Description**: Uploads a trained model along with its metadata to the ai-catalog.
+        - **Description**: Uploads a trained model along with its metadata to the ai-repository.
         - **Parameters**:
             - **Body**: JSON object containing the model file (base64 encoded) and metadata.
         - **Response**: JSON status message indicating success or failure of the upload.
@@ -668,7 +668,7 @@ Communication between the **ai-*** components and other services primarily occur
     
     - **Description**: Topic to which the AI Inference service publishes classification probabilities.
     - **Producer**: `ai-inference`
-    - **Consumer**: `ai-detector`, `ai-monitoring`
+    - **Consumer**: `ai-detector`, `telemetry`
 3. **training_data**:
     
     - **Description**: Topic from which the AI Training service consumes preprocessed traffic data for model training.
@@ -678,7 +678,7 @@ Communication between the **ai-*** components and other services primarily occur
     
     - **Description**: Topic to which the Model Upload service publishes information about uploaded models.
     - **Producer**: `model-upload`
-    - **Consumer**: `ai-catalog`
+    - **Consumer**: `ai-repository`
 
 ### Message Schemas
 
@@ -893,19 +893,17 @@ Below is a comprehensive list of all relevant custom environment variables used 
 
 ### AI Training
 
-- `KAFKA_URL="localhost:9094"`
-- `CATALOG_URL="localhost:9200"`
-- `TRAINING_DATA_TOPIC="training_data"`
-- `MODEL_OUTPUT_PATH="./models/"`
-- `TZ="Europe/Madrid"`
-
-### AI Catalog
-
 - `CATALOG_URL="http://localhost:9200"`
 - `CATALOG_INDEX="models"`
-- `MODELS_PATH="./models/rev3/"`
-- `MODEL="random_forest_train_ceos2_eth4_29_final_10estimators.joblib"`
+- `DATA_PATH="./data/"`
+- `PORT=5050`
 - `TZ="Europe/Madrid"`
+
+### AI Repository
+
+- `discovery.type=single-node`
+- `xpack.security.enabled=false`
+- `http.max_content_length=1gb`
 
 ### Data Aggregator
 
@@ -946,9 +944,18 @@ Below is a comprehensive list of all relevant custom environment variables used 
 - `THRESHOLDS_CONFIG="/config/thresholds.yaml"`
 - `TZ="Europe/Madrid"`
 
-### AI Monitoring
+### Telemetry
 
-- `GF_SECURITY_ADMIN_PASSWORD=admin` (Grafana)
+- `KAFKA_URL="localhost:9094"`
+- `CONSUMER_TOPIC="predicted_labels"`
+- `CONSUMER_CLIENT_ID="telemetry-consumer"`
+- `CONSUMER_GROUP_ID="telemetry"`
+- `INFLUX_URL="http://localhost:8086"`
+- `INFLUX_BUCKET="monitoring"`
+- `INFLUX_ORG="across"`
+- `INFLUX_TOKEN="AU3tZWhRauEKhrcF1R6KbT8n"`
+- `TIME_INTERVAL=5`
+- `MAX_POLL_RECORDS=500`
 
 ---
 
@@ -956,23 +963,24 @@ Below is a comprehensive list of all relevant custom environment variables used 
 
 ```
 across-tc-3.5-network-detection/
-├── ai-catalog
+├── ai-repository
 │   └── Dockerfile
 ├── ai-inference
 │   ├── files
 │   │   └── requirements.txt
 │   ├── Dockerfile
 │   └── ai_inference.py
-├── ai-monitoring
-│   └── Dockerfile
 ├── ai-training
 │   ├── files
+│   │   ├── ai_training.py
 │   │   └── requirements.txt
-│   ├── Dockerfile
-│   └── train.py
-├── ai-detector
-│   ├── Dockerfile
-│   └── ai_detector.py
+│   ├── data/
+│   └── Dockerfile
+├── telemetry
+│   ├── files
+│   │   ├── telemetry_prueba_intervalos.py
+│   │   └── requirements.txt
+│   └── Dockerfile
 ├── data_aggregator
 │   ├── data_aggregator
 │   │   ├── nfstream
@@ -1028,7 +1036,7 @@ across-tc-3.5-network-detection/
     └── dashboard.png
 ```
 
-- **ai-catalog/**
+- **ai-repository/**
     
     - **Dockerfile**: Builds an Elasticsearch instance configured for single-node operation without security features for simplicity.
 - **ai-inference/**
@@ -1036,18 +1044,17 @@ across-tc-3.5-network-detection/
     - **files/requirements.txt**: Lists Python dependencies required for the AI Inference service.
     - **Dockerfile**: Builds the AI Inference Docker image, installs dependencies, and sets environment variables for Kafka and Elasticsearch integration.
     - **ai_inference.py**: Main application script handling data consumption, inference, and result publication.
-- **ai-monitoring/**
-    
-    - **Dockerfile**: Builds the custom Grafana image `ai-monitoring`, extending the base Grafana image with predefined dashboards and configurations.
 - **ai-training/**
     
     - **files/requirements.txt**: Lists Python dependencies required for the AI Training service.
-    - **Dockerfile**: Builds the AI Training Docker image, installs dependencies, and sets environment variables for Kafka and Elasticsearch integration.
-    - **train.py**: Script responsible for training machine learning models using consumed data.
-- **ai-detector/**
+    - **files/ai_training.py**: Flask-based service that exposes `/train` and `/retrain` API endpoints for model training and publishing to the ai-repository.
+    - **Dockerfile**: Builds the AI Training Docker image, installs dependencies, and sets environment variables for Elasticsearch integration.
+    - **data/**: Mount point for training and validation CSV datasets.
+- **telemetry/**
     
-    - **Dockerfile**: Builds the AI Detector Docker image, installs dependencies, and sets environment variables for Kafka integration.
-    - **ai_detector.py**: Script responsible for assigning final classifications based on inference probabilities.
+    - **files/requirements.txt**: Lists Python dependencies required for the Telemetry service.
+    - **files/telemetry_prueba_intervalos.py**: Kafka consumer that collects classification results and stores them in InfluxDB for monitoring.
+    - **Dockerfile**: Builds the Telemetry Docker image with Kafka and InfluxDB integration.
 - **data_aggregator/**
     
     - **nfstream/**
@@ -1069,7 +1076,7 @@ across-tc-3.5-network-detection/
 - **model-upload/**
     - **files/requirements.txt**: Lists Python dependencies for the Model Upload service.
     - **Dockerfile**: Builds the Model Upload Docker image, installs dependencies, and sets environment variables for Elasticsearch integration.
-    - **model_upload.py**: Script responsible for uploading trained models to the ai-catalog.
+    - **model_upload.py**: Script responsible for uploading trained models to the ai-repository.
 - **ansible-playbooks/**
     
     - **mw-deployment.yaml**: Deploys the network topology using KNE, sets up necessary configurations, and initializes the "gateway2" pod.
