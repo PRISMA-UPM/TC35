@@ -23,6 +23,9 @@ services:
     network_mode: "host"
     image: model-upload
     container_name: model-upload
+    depends_on:
+      ai-repository:
+        condition: service_healthy
     pull_policy: build
     volumes:
       - ./model-upload/files/models/:/usr/app/src/models/
@@ -37,7 +40,7 @@ services:
       ai-repository:
         condition: service_healthy
       model-upload:
-        condition: service_started
+        condition: service_completed_successfully
     pull_policy: build
     volumes:
       - ./ai-training/data/:/usr/app/src/data/
@@ -78,9 +81,9 @@ services:
       ai-repository:
         condition: service_healthy
       model-upload:
-        condition: service_started
+        condition: service_completed_successfully
       kafka:
-        condition: service_started
+        condition: service_healthy
     container_name: ai-inference
     pull_policy: build
     

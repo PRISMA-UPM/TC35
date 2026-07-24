@@ -16,7 +16,7 @@ ENV CONSUMER_GROUP_ID="ai-inference"
 
 ENV CATALOG_MODELS_INDEX="models"
 
-ENV LOAD_MODEL="None"
+ENV LOAD_MODEL="random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib"
 
 RUN apt-get update -y
 

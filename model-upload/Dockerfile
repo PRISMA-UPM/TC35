@@ -4,9 +4,9 @@ ENV CATALOG_URL="http://localhost:9200"
 
 ENV CATALOG_INDEX="models"
 
-ENV MODELS_PATH="./models/rev3/"
+ENV MODELS_PATH="./models/rev4/"
 
-ENV MODEL="random_forest_train_ceos2_eth4_29_final_10estimators.joblib"
+ENV MODEL="random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib"
 
 RUN apt-get update -y
 

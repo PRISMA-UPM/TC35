@@ -427,6 +427,19 @@ python train.py --config config.yaml
 
 Ensure that the training and testing datasets are correctly specified in the configuration file.
 
+### Bundled Machine Learning Model
+
+The trained 20-estimator Random Forest model for the `ceos2_eth3_rev4` dataset is included at:
+
+```text
+model-upload/files/models/rev4/random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib
+model-upload/files/models/rev4/random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.json
+```
+
+The JSON file contains the model metadata, evaluation metrics, and class-label correspondence required by the upload and inference services.
+
+Docker Compose mounts `model-upload/files/models/` at `/usr/app/src/models/` in the `model-upload` container. On startup, Compose waits for the AI repository to become healthy, uploads the rev4 model and metadata, and only then starts AI inference. AI inference waits until that exact filename is searchable in the repository, downloads it, and loads it with Joblib. Other generated `.joblib` artifacts remain ignored by Git; this bundled model is explicitly included.
+
 ---
 
 ## Heavy Hitter Detector Deployment
@@ -1001,9 +1014,15 @@ across-tc-3.5-network-detection/
 │   └── trash.sh
 ├── model-upload
 │   ├── files
-│   │   └── requirements.txt
-│   ├── Dockerfile
-│   └── model_upload.py
+│   │   ├── model_upload.py
+│   │   ├── requirements.txt
+│   │   └── models
+│   │       ├── rev1
+│   │       ├── rev3
+│   │       └── rev4
+│   │           ├── random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib
+│   │           └── random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.json
+│   └── Dockerfile
 ├── ansible-playbooks
 │   ├── mw-deployment.yaml
 │   ├── mw-config.yaml
@@ -1075,8 +1094,9 @@ across-tc-3.5-network-detection/
     - **trash.sh**: Script to clean up dangling Docker images and prune networks.
 - **model-upload/**
     - **files/requirements.txt**: Lists Python dependencies for the Model Upload service.
+    - **files/model_upload.py**: Script responsible for uploading trained models to the ai-repository.
+    - **files/models/**: Contains model metadata and the bundled revision 4 Random Forest model used by the Model Upload service.
     - **Dockerfile**: Builds the Model Upload Docker image, installs dependencies, and sets environment variables for Elasticsearch integration.
-    - **model_upload.py**: Script responsible for uploading trained models to the ai-repository.
 - **ansible-playbooks/**
     
     - **mw-deployment.yaml**: Deploys the network topology using KNE, sets up necessary configurations, and initializes the "gateway2" pod.

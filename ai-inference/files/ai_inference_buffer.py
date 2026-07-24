@@ -32,6 +32,7 @@ ProducerConfig = namedtuple("ProducerConfig", ["client_id", "topic"])
 
 BUFFER_SIZE = 300
 TIMEOUT = 0.500
+MODEL_DISCOVERY_RETRY_SECONDS = 1
 
 class AIInference:
     def __init__(self, kafka_url: str, catalog_url: str, models_index: str, producer_client_id: str,
@@ -68,11 +69,7 @@ class AIInference:
 
         self.producer, self.consumer = self.__connect_to_kafka()
 
-        self.available_models_ids, self.available_models = self.list_models(self.catalog_url, self.models_index)
-        
-        if not self.available_models:
-            LOGGER.error("%s: No models available", __name__)
-            exit()
+        self.available_models_ids, self.available_models = self.wait_for_model(load_model)
             
         LOGGER.info("Available models: %s", self.available_models)
 
@@ -136,6 +133,26 @@ class AIInference:
         except Exception as e:
             LOGGER.error("%s: Error sending inference probabilities to Kafka cluster: %s", __name__, e)
 
+    def wait_for_model(self, model_selector: Optional[str]) -> Tuple[List[str], List[Model]]:
+        """Wait until the repository contains the configured model."""
+        while True:
+            model_ids, models = self.list_models(self.catalog_url, self.models_index)
+
+            if model_selector is None or model_selector == "None":
+                if models:
+                    return model_ids, models
+                LOGGER.info("No models are available yet. Retrying in %s second...", MODEL_DISCOVERY_RETRY_SECONDS)
+            elif any(model_selector in (model.id, model.filename) for model in models):
+                return model_ids, models
+            else:
+                LOGGER.info(
+                    "Configured model (%s) is not available yet. Retrying in %s second...",
+                    model_selector,
+                    MODEL_DISCOVERY_RETRY_SECONDS,
+                )
+
+            time.sleep(MODEL_DISCOVERY_RETRY_SECONDS)
+
     def list_models(self, model_repository_url: str, models_index: str) -> Tuple[List[str], List[Model]]:
         """
         Returns a list of the available models in self.models_index.
@@ -145,7 +162,7 @@ class AIInference:
         LOGGER.info("Getting available models from ElasticSearch...")
         headers = {'Content-Type': 'application/json'}
 
-        api_url = (f'{model_repository_url}/{models_index}/_search?filter_path=hits.hits._id,'
+        api_url = (f'{model_repository_url}/{models_index}/_search?size=1000&filter_path=hits.hits._id,'
                    f'hits.hits._source.file_data.filename,hits.hits._source.metadata')
         models = []
         ids = []
@@ -229,23 +246,30 @@ class AIInference:
         
         return model, model_type
 
-    def select_model(self, model_id: str) -> Tuple[Any, str]:
-        model_is_valid = True
-        
-        if model_id is None or model_id == "None":
+    def select_model(self, model_selector: Optional[str]) -> Tuple[Any, str, str, dict]:
+        if model_selector is None or model_selector == "None":
             LOGGER.warning("No model was selected.")
-            
-            model_is_valid = False
-            
-        elif model_id not in self.available_models_ids:
-            LOGGER.warning("Model (%s) not available", model_id)
-            
-            model_is_valid = False
-            
-        if not model_is_valid:
-            model_id = self.available_models_ids[0]
-            
-            LOGGER.info("Selecting first available model (%s)...", model_id)
+            selected_model = self.available_models[0]
+            LOGGER.info("Selecting first available model (%s)...", selected_model.id)
+        else:
+            selected_model = next(
+                (
+                    model
+                    for model in self.available_models
+                    if model_selector in (model.id, model.filename)
+                ),
+                None,
+            )
+            if selected_model is None:
+                raise ValueError(f"Model ({model_selector}) is not available")
+
+            LOGGER.info(
+                "Selecting configured model %s (%s)...",
+                selected_model.filename,
+                selected_model.id,
+            )
+
+        model_id = selected_model.id
 
         if model_id in self.downloaded_models:
             model_path = self.downloaded_models[model_id]
@@ -255,7 +279,7 @@ class AIInference:
             
         model, model_type = self.__load_model_from_file(model_path)
         
-        label_correspondence = self.available_models[self.available_models_ids.index(model_id)].metadata["label_correspondence"]
+        label_correspondence = selected_model.metadata["label_correspondence"]
         
         label_correspondence = {int(i): label_correspondence[i] for i in label_correspondence}
         
@@ -462,7 +486,8 @@ def main(args):
     ai_inference = AIInference(kafka_url=args.kafka_url, catalog_url=args.catalog_url,
                                models_index=args.catalog_models_index, consumer_topic=args.consumer_topic,
                                producer_topic=args.producer_topic, consumer_client_id=args.consumer_client_id,
-                               producer_client_id=args.producer_client_id, consumer_group_id=args.consumer_group_id)
+                               producer_client_id=args.producer_client_id, consumer_group_id=args.consumer_group_id,
+                               load_model=args.load_model)
     ai_inference.start_inference()
 
 

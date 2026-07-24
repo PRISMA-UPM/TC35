@@ -1,0 +1,20 @@
+{
+    "model": "random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib",
+    "label_correspondence":{
+        "0": "normal_traffic",
+        "1": "benign_heavy_hitter",
+        "2": "malign_heavy_hitter"
+    },
+    "metrics":{
+        "F1 (macro)": 0.8988,
+        "F1 (weighted)": 0.9947,
+        "Prec (macro)": 0.8584,
+        "Prec (weighted)": 0.9949,
+        "Recall (macro)": 0.9568,
+        "Recall (weighted)": 0.9946,
+        "Accuracy (macro)": 0.9946,
+        "Accuracy (weighted)": 0.9568
+    },
+    "timestamp": "2024-07-23 22:28:19:705632",
+    "version": "rev4"
+}

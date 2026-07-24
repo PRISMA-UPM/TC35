@@ -35,14 +35,16 @@ def send_data(url: str, path: str, filename: str, metadata: dict) -> None:
     headers = {"Content-Type": "application/json"}
     
     # Make the POST request
-    response = requests.post(url, data=json.dumps(data), headers=headers)
+    response = requests.post(url, data=json.dumps(data), headers=headers, timeout=30)
 
     if response.status_code == 201:
         LOGGER.info("File [%s] upload successful.", filename)
         LOGGER.info("Response content: %s", response.text)
-        
-    else:
-        LOGGER.error("Error: %s - %s", response.status_code, response.text)
+        return
+
+    LOGGER.error("Error: %s - %s", response.status_code, response.text)
+    response.raise_for_status()
+    raise RuntimeError(f"Unexpected response status: {response.status_code}")
 
 def main(args):
     """
@@ -64,7 +66,7 @@ def main(args):
     LOGGER.info(meta_dict)
 
     # Send models and meta-data to the API
-    api_url = f"{args.url}/{args.index}/_doc"
+    api_url = f"{args.url}/{args.index}/_doc?refresh=wait_for"
     LOGGER.info("API URL: %s", api_url)
     success = False
     while not success:
@@ -74,8 +76,8 @@ def main(args):
                       filename=args.filename,
                       metadata=meta_dict)
             success = True
-        except Exception:
-            LOGGER.warning("Failed to connect to AI Model Repository. Retrying in 1 second...")
+        except Exception as exc:
+            LOGGER.warning("Failed to upload model (%s). Retrying in 1 second...", exc)
             sleep(1)
 
 
