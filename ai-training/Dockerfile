@@ -1,31 +1,26 @@
-FROM python:3.8.10
+FROM python:3.10.18-slim-bookworm
 
-ENV CATALOG_URL="http://localhost:9200"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    CATALOG_URL=http://ai-repository:9200 \
+    CATALOG_INDEX=models \
+    DATA_PATH=/app/data \
+    MODELS_OUT_PATH=/app/models \
+    PORT=5050
 
-ENV CATALOG_INDEX="models"
+WORKDIR /app
 
-ENV DATA_PATH="./data/"
+COPY ai-training/files/requirements.txt ./requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && python -m pip install --no-cache-dir -r requirements.txt
 
-ENV PORT=5050
+COPY tc35_contract/ ./tc35_contract/
+COPY ai-training/files/ai_training.py ./
 
-RUN apt-get update -y
-
-RUN python3 -m pip install --no-cache-dir --upgrade pip
-
-RUN python3 -m pip install --upgrade setuptools wheel pip-tools
-
-WORKDIR /usr/app/src
-
-COPY files/requirements.txt ./
-
-RUN python3 -m pip install -r requirements.txt
-
-COPY files/ai_training.py ./
-
-RUN mkdir -p data models
-
-ENV TZ="Europe/Madrid"
+RUN useradd --create-home --uid 10001 tc35 \
+    && mkdir -p /app/data /app/models \
+    && chown -R tc35:tc35 /app
+USER tc35
 
 EXPOSE 5050
-
-CMD python3 ./ai_training.py --catalog_url=$CATALOG_URL --catalog_index=$CATALOG_INDEX --data_path=$DATA_PATH --port=$PORT
+CMD ["python", "./ai_training.py"]

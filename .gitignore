@@ -1,7 +1,35 @@
 *.pcap
+*.pcapng
 *.joblib
 !model-upload/files/models/rev4/random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib
 
-# Generated output data
-intelligent-telemetry/files/output_csv/
+# Local configuration and Python tooling
+.env*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated or private input/output data
 ai-training/data/
+nfstream/pcaps/*
+!nfstream/pcaps/.gitkeep
+nfstream/output/
+nfstream/snapshots/
+intelligent-telemetry/output/*
+!intelligent-telemetry/output/.gitkeep
+ai-detector/output/*
+!ai-detector/output/.gitkeep
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: TC35 InfluxDB
+    uid: tc35-influx
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    editable: false
+    secureJsonData:
+      token: $INFLUX_TOKEN
+    jsonData:
+      version: Flux
+      organization: $INFLUX_ORG
+      defaultBucket: $INFLUX_BUCKET
+      timeInterval: 1s

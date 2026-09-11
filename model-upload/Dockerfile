@@ -1,29 +1,22 @@
-FROM python:3.8.10
+FROM python:3.12-slim-bookworm
 
-ENV CATALOG_URL="http://localhost:9200"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    CATALOG_URL=http://ai-repository:9200 \
+    CATALOG_INDEX=models \
+    MODELS_PATH=/app/models/rev4
 
-ENV CATALOG_INDEX="models"
+WORKDIR /app
 
-ENV MODELS_PATH="./models/rev4/"
+COPY model-upload/files/requirements.txt ./requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir -r requirements.txt
 
-ENV MODEL="random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib"
+COPY model-upload/files/model_upload.py ./
+COPY model-upload/files/models/ ./models/
 
-RUN apt-get update -y
+RUN useradd --create-home --uid 10001 tc35 \
+    && chown -R tc35:tc35 /app
+USER tc35
 
-RUN python3 -m pip install --no-cache-dir --upgrade pip
-
-RUN python3 -m pip install --upgrade setuptools wheel pip-tools
-
-WORKDIR /usr/app/src
-
-COPY files/requirements.txt ./
-
-RUN python3 -m pip install -r requirements.txt
-
-RUN mkdir models
-
-#COPY files/models/* ./models/
-
-COPY files/model_upload.py ./
-
-CMD python3 ./model_upload.py --url=$CATALOG_URL --index=$CATALOG_INDEX --path=$MODELS_PATH --filename=$MODEL
+CMD ["python", "./model_upload.py"]

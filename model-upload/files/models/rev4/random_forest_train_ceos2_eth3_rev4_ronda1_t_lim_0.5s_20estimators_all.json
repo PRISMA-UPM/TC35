@@ -1,11 +1,27 @@
 {
     "model": "random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib",
-    "label_correspondence":{
+    "artifact_sha256": "105452e85dd7e7b3b41e5cd765a9333d8894d4d257e83f23e65b6b016704b315",
+    "input_schema": "nfstream-v1",
+    "feature_names": [
+        "udps.protocol",
+        "udps.src2dst_last",
+        "udps.dst2src_last",
+        "udps.src2dst_pkts_data",
+        "udps.dst2src_pkts_data",
+        "src2dst_bytes",
+        "dst2src_bytes",
+        "udps.diff_dst_src_first"
+    ],
+    "snapshot_interval_seconds": 0.5,
+    "training_library": {
+        "scikit-learn": "1.0.2"
+    },
+    "label_correspondence": {
         "0": "normal_traffic",
         "1": "benign_heavy_hitter",
         "2": "malign_heavy_hitter"
     },
-    "metrics":{
+    "metrics": {
         "F1 (macro)": 0.8988,
         "F1 (weighted)": 0.9947,
         "Prec (macro)": 0.8584,
@@ -15,6 +31,6 @@
         "Accuracy (macro)": 0.9946,
         "Accuracy (weighted)": 0.9568
     },
-    "timestamp": "2024-07-23 22:28:19:705632",
+    "timestamp": "2024-07-23T22:28:19.705632",
     "version": "rev4"
 }

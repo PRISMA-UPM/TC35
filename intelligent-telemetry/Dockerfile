@@ -1,45 +1,37 @@
-FROM python:3.8.10
+FROM python:3.12-slim-bookworm
 
-ENV KAFKA_URL="localhost:9094"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    KAFKA_URL=kafka:9092 \
+    CONSUMER_TOPIC=predicted_labels \
+    CONSUMER_CLIENT_ID=telemetry-consumer \
+    CONSUMER_GROUP_ID=telemetry \
+    MAX_POLL_RECORDS=500 \
+    INFLUX_URL=http://influxdb:8086 \
+    INFLUX_BUCKET=monitoring \
+    INFLUX_ORG=tc35 \
+    TIME_INTERVAL=5 \
+    ALLOWED_LATENESS_SECONDS=5 \
+    IDLE_FLUSH_SECONDS=1 \
+    REBASE_EVENT_TIME=true \
+    MONITORED_LABELS=normal_traffic,benign_heavy_hitter,malign_heavy_hitter \
+    BENIGN_HH_LABELS=benign_heavy_hitter \
+    MALIGN_LABELS=malign_heavy_hitter \
+    INTERVAL_CSV_PATH=/app/output/retrasos_intervalo.csv \
+    LATENCY_CSV_PATH=/app/output/retrasos_snapshot.csv
 
-ENV CONSUMER_TOPIC="predicted_labels"
+WORKDIR /app
 
-ENV CONSUMER_CLIENT_ID="telemetry-consumer"
+COPY intelligent-telemetry/files/requirements.txt ./requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir -r requirements.txt
 
-ENV CONSUMER_GROUP_ID="telemetry"
+COPY tc35_contract/ ./tc35_contract/
+COPY intelligent-telemetry/files/telemetry.py ./
 
-ENV INFLUX_URL="http://localhost:8086"
+RUN useradd --create-home --uid 10001 tc35 \
+    && mkdir -p /app/output \
+    && chown -R tc35:tc35 /app
+USER tc35
 
-ENV INFLUX_BUCKET="monitoring"
-
-ENV INFLUX_ORG="across"
-
-ENV INFLUX_TOKEN="AU3tZWhRauEKhrcF1R6KbT8n"
-
-ENV INFLUX_USERNAME="admin"
-
-ENV INFLUX_PASSWORD="admin-lab"
-
-ENV TIME_INTERVAL=5
-
-ENV MAX_POLL_RECORDS=500
-
-RUN apt-get update -y
-
-RUN python3 -m pip install --no-cache-dir --upgrade pip
-
-RUN python3 -m pip install --upgrade setuptools wheel pip-tools
-
-WORKDIR /usr/app/src
-
-COPY files/requirements.txt ./
-
-RUN python3 -m pip install -r requirements.txt
-
-RUN python3 -m pip install dill
-
-COPY files/telemetry_prueba_intervalos.py ./
-
-ENV TZ="Europe/Madrid"
-
-CMD python3 ./telemetry_prueba_intervalos.py --kafka_url=$KAFKA_URL --consumer_topic=$CONSUMER_TOPIC --consumer_client_id=$CONSUMER_CLIENT_ID --consumer_group_id=$CONSUMER_GROUP_ID --influx_url=$INFLUX_URL --influx_bucket=$INFLUX_BUCKET --influx_org=$INFLUX_ORG --influx_token=$INFLUX_TOKEN --time_interval=$TIME_INTERVAL --max_poll_records=$MAX_POLL_RECORDS
+CMD ["python", "./telemetry.py"]

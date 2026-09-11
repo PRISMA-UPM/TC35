@@ -1,115 +1,337 @@
+name: tc35
+
 services:
-    
   ai-repository:
     build:
-      context: ./ai-repository
-    network_mode: "host"
-    image: ai-repository
-    container_name: ai-repository
+      context: .
+      dockerfile: ai-repository/Dockerfile
+    environment:
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
     ports:
-      - "9200:9200"
-    healthcheck:
-        test: ["CMD-SHELL", "curl --silent --fail localhost:9200/_cluster/health || exit 1"]
-        interval: 30s
-        timeout: 30s
-        retries: 60
-    pull_policy: build
+      - "127.0.0.1:9200:9200"
     volumes:
-      - catalog_data:/var/lib/elasticsearch/data
-    
+      - catalog_data:/usr/share/elasticsearch/data
+    networks:
+      - tc35
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow' >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+    restart: unless-stopped
+
   model-upload:
     build:
-      context: ./model-upload
-    network_mode: "host"
-    image: model-upload
-    container_name: model-upload
+      context: .
+      dockerfile: model-upload/Dockerfile
+    environment:
+      CATALOG_URL: http://ai-repository:9200
+      CATALOG_INDEX: models
+      MODEL: random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib
     depends_on:
       ai-repository:
         condition: service_healthy
-    pull_policy: build
-    volumes:
-      - ./model-upload/files/models/:/usr/app/src/models/
-
-  ai-training:
-    build:
-      context: ./ai-training
-    network_mode: "host"
-    image: ai-training
-    container_name: ai-training
-    depends_on:
-      ai-repository:
-        condition: service_healthy
-      model-upload:
-        condition: service_completed_successfully
-    pull_policy: build
-    volumes:
-      - ./ai-training/data/:/usr/app/src/data/
+    networks:
+      - tc35
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
 
   kafka:
-    image: "bitnami/kafka:latest"
-    networks:
-      - app-tier
-    volumes:
-      - "kafka_data:/bitnami"
-    ports:
-      - "9094:9094"
+    image: apache/kafka:4.3.1
     environment:
-      # KRaft settings
-      - KAFKA_CFG_NODE_ID=0
-      - KAFKA_CFG_PROCESS_ROLES=controller,broker
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@localhost:9093
-      # Listeners
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://0.0.0.0:9094
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://milkyway.etsisi.upm.es:9094
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
-    container_name: kafka
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: ${KAFKA_TOPIC_PARTITIONS:-8}
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "127.0.0.1:9094:9094"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - tc35
     healthcheck:
-      test: kafka-topics.sh --list --bootstrap-server localhost:9092 || exit 1
-      interval: 1s
-      timeout: 60s
-      retries: 60
-    pull_policy: missing
-    
-  ai-inference:
-    build:
-      context: ./ai-inference
-    network_mode: "host"
-    image: ai-inference
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  kafka-init:
+    image: apache/kafka:4.3.1
+    environment:
+      KAFKA_TOPIC_PARTITIONS: ${KAFKA_TOPIC_PARTITIONS:-8}
+    entrypoint:
+      - /bin/sh
+      - /opt/tc35/create-topics.sh
+    volumes:
+      - ./kafka/create-topics.sh:/opt/tc35/create-topics.sh:ro
     depends_on:
-      ai-repository:
-        condition: service_healthy
-      model-upload:
-        condition: service_completed_successfully
       kafka:
         condition: service_healthy
-    container_name: ai-inference
-    pull_policy: build
-    
-  data_aggregator:
+    networks:
+      - tc35
+    restart: "no"
+
+  ai-inference:
+    scale: ${AI_INFERENCE_REPLICAS:-8}
     build:
-      context: ./data_aggregator/data_aggregator
-    network_mode: "host"
-    image: data_aggregator
+      context: .
+      dockerfile: ai-inference/Dockerfile
+    environment:
+      KAFKA_URL: kafka:9092
+      CATALOG_URL: http://ai-repository:9200
+      LOAD_MODEL: random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib
+      MODEL_SHA256: 105452e85dd7e7b3b41e5cd765a9333d8894d4d257e83f23e65b6b016704b315
+      INFERENCE_BATCH_SIZE: ${INFERENCE_BATCH_SIZE:-900}
+      INFERENCE_IDLE_POLL_SECONDS: ${INFERENCE_IDLE_POLL_SECONDS:-0.001}
+    volumes:
+      - inference_models:/app/models
+    depends_on:
+      model-upload:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - tc35
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  ai-detector:
+    scale: ${AI_DETECTOR_REPLICAS:-4}
+    user: "${TC35_OUTPUT_UID:-1000}:${TC35_OUTPUT_GID:-1000}"
+    build:
+      context: .
+      dockerfile: ai-detector/Dockerfile
+    environment:
+      KAFKA_URL: kafka:9092
+      DETECTOR_CSV_DIR: /app/output_csv
+    volumes:
+      - ./ai-detector/output:/app/output_csv
     depends_on:
       ai-inference:
         condition: service_started
-      kafka:
-        condition: service_started
-    volumes:
-      - ./data_aggregator/data_aggregator/pcaps:/app/pcaps
-    container_name: data_aggregator
-    pull_policy: build
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - tc35
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
 
-    
+  nfstream:
+    profiles:
+      - capture
+    build:
+      context: .
+      dockerfile: nfstream/Dockerfile
+    environment:
+      KAFKA_URL: kafka:9092
+      CAPTURE_MODE: ${CAPTURE_MODE:-pcap-freno}
+      PCAP_FRENO_MAX_LEAD_SECONDS: ${PCAP_FRENO_MAX_LEAD_SECONDS:-0.25}
+      PCAP_FILE: /captures/${PCAP_FILENAME:-capture.pcap}
+      INTERFACE: ${CAPTURE_INTERFACE:-}
+      MONITORED_DEVICE: ${MONITORED_DEVICE:-unknown}
+      NFSTREAM_METERS: ${NFSTREAM_METERS:-6}
+      NFSTREAM_REQUIRE_EXACT_METERS: ${NFSTREAM_REQUIRE_EXACT_METERS:-true}
+      KAFKA_MAX_PENDING_SENDS: ${KAFKA_MAX_PENDING_SENDS:-1000}
+      KAFKA_BATCH_SIZE: ${KAFKA_BATCH_SIZE:-32768}
+      KAFKA_LINGER_MS: ${KAFKA_LINGER_MS:-10}
+      KAFKA_COMPRESSION_TYPE: ${KAFKA_COMPRESSION_TYPE:-gzip}
+      KAFKA_FLUSH_PACKET_INTERVAL: ${KAFKA_FLUSH_PACKET_INTERVAL:-900}
+      KAFKA_CLEANUP_FLUSH_FLOW_INTERVAL: ${KAFKA_CLEANUP_FLUSH_FLOW_INTERVAL:-300}
+      KAFKA_ACKS: ${KAFKA_ACKS:-1}
+      KAFKA_RETRIES: ${KAFKA_RETRIES:-0}
+      T_LIM: "0.5"
+    volumes:
+      - ./nfstream/pcaps:/captures:ro
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      ai-inference:
+        condition: service_started
+    networks:
+      - tc35
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  ai-training:
+    profiles:
+      - training
+    build:
+      context: .
+      dockerfile: ai-training/Dockerfile
+    environment:
+      CATALOG_URL: http://ai-repository:9200
+      CATALOG_INDEX: models
+      DATA_PATH: /app/data
+      MODELS_OUT_PATH: /app/models
+      PORT: 5050
+    ports:
+      - "127.0.0.1:5050:5050"
+    volumes:
+      - ./ai-training/data:/app/data:ro
+      - training_models:/app/models
+    depends_on:
+      ai-repository:
+        condition: service_healthy
+    networks:
+      - tc35
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  influxdb:
+    profiles:
+      - monitoring
+      - capture
+      - live-capture
+    image: influxdb:2.9.1
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_USERNAME:-tc35}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD:-change-this-local-password}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG:-tc35}
+      DOCKER_INFLUXDB_INIT_BUCKET: monitoring
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN:-change-this-local-influx-token-0123456789}
+    ports:
+      - "127.0.0.1:8086:8086"
+    volumes:
+      - influx_data:/var/lib/influxdb2
+    networks:
+      - tc35
+    healthcheck:
+      test:
+        - CMD
+        - influx
+        - ping
+        - --host
+        - http://localhost:8086
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  intelligent-telemetry:
+    profiles:
+      - monitoring
+      - capture
+      - live-capture
+    build:
+      context: .
+      dockerfile: intelligent-telemetry/Dockerfile
+    user: "${TC35_OUTPUT_UID:-1000}:${TC35_OUTPUT_GID:-1000}"
+    environment:
+      KAFKA_URL: kafka:9092
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_ORG: ${INFLUX_ORG:-tc35}
+      INFLUX_BUCKET: monitoring
+      INFLUX_TOKEN: ${INFLUX_TOKEN:-change-this-local-influx-token-0123456789}
+      MAX_POLL_RECORDS: ${MAX_POLL_RECORDS:-500}
+      MONITORING_WINDOW_SECONDS: ${MONITORING_WINDOW_SECONDS:-5}
+      ALLOWED_LATENESS_SECONDS: ${ALLOWED_LATENESS_SECONDS:-5}
+      IDLE_FLUSH_SECONDS: ${IDLE_FLUSH_SECONDS:-1}
+      REBASE_EVENT_TIME: ${REBASE_EVENT_TIME:-true}
+      MONITORED_LABELS: ${MONITORED_LABELS:-normal_traffic,benign_heavy_hitter,malign_heavy_hitter}
+      BENIGN_HH_LABELS: ${BENIGN_HH_LABELS:-benign_heavy_hitter}
+      MALIGN_LABELS: ${MALIGN_LABELS:-malign_heavy_hitter}
+      INTERVAL_CSV_PATH: /app/output/retrasos_intervalo.csv
+      LATENCY_CSV_PATH: /app/output/retrasos_snapshot.csv
+    volumes:
+      - ./intelligent-telemetry/output:/app/output
+    depends_on:
+      ai-detector:
+        condition: service_started
+      influxdb:
+        condition: service_healthy
+    networks:
+      - tc35
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  grafana:
+    profiles:
+      - monitoring
+      - capture
+      - live-capture
+    build:
+      context: .
+      dockerfile: grafana/Dockerfile
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-this-local-grafana-password}
+      INFLUX_ORG: ${INFLUX_ORG:-tc35}
+      INFLUX_BUCKET: monitoring
+      INFLUX_TOKEN: ${INFLUX_TOKEN:-change-this-local-influx-token-0123456789}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    networks:
+      - tc35
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
 volumes:
-  kafka_data:
-    driver: local
   catalog_data:
-    driver: local
-  zookeeper_data:
-    driver: local
+  grafana_data:
+  inference_models:
+  influx_data:
+  kafka_data:
+  training_models:
+
 networks:
-  app-tier:
+  tc35:
     driver: bridge

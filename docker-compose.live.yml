@@ -1,0 +1,40 @@
+services:
+  nfstream-live:
+    profiles:
+      - live-capture
+    build:
+      context: .
+      dockerfile: nfstream/Dockerfile
+    network_mode: host
+    environment:
+      KAFKA_URL: localhost:9094
+      CAPTURE_MODE: network
+      INTERFACE: ${CAPTURE_INTERFACE:?Set CAPTURE_INTERFACE in .env}
+      MONITORED_DEVICE: ${MONITORED_DEVICE:-unknown}
+      NFSTREAM_METERS: ${NFSTREAM_METERS:-6}
+      NFSTREAM_REQUIRE_EXACT_METERS: ${NFSTREAM_REQUIRE_EXACT_METERS:-true}
+      KAFKA_MAX_PENDING_SENDS: ${KAFKA_MAX_PENDING_SENDS:-1000}
+      KAFKA_BATCH_SIZE: ${KAFKA_BATCH_SIZE:-32768}
+      KAFKA_LINGER_MS: ${KAFKA_LINGER_MS:-10}
+      KAFKA_COMPRESSION_TYPE: ${KAFKA_COMPRESSION_TYPE:-gzip}
+      KAFKA_FLUSH_PACKET_INTERVAL: ${KAFKA_FLUSH_PACKET_INTERVAL:-900}
+      KAFKA_CLEANUP_FLUSH_FLOW_INTERVAL: ${KAFKA_CLEANUP_FLUSH_FLOW_INTERVAL:-300}
+      KAFKA_ACKS: ${KAFKA_ACKS:-1}
+      KAFKA_RETRIES: ${KAFKA_RETRIES:-0}
+      T_LIM: "0.5"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      ai-inference:
+        condition: service_started
+    restart: unless-stopped

@@ -10,26 +10,30 @@ Interfaces:
 """
 
 import os
-import json
 import time
 import base64
-import signal
+import hashlib
 import logging
 import argparse
+import re
+from datetime import datetime, timezone
+from pathlib import Path
 from sys import stdout
 from typing import Tuple, Optional, Any, Dict
 from collections import namedtuple
+from urllib.parse import quote
 
-import numpy as np
 import pandas as pd
+import numpy as np
 import requests
 from flask import Flask, request, jsonify
-from joblib import load, dump
+from joblib import dump
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     confusion_matrix, classification_report
 )
+from tc35_contract import FEATURE_NAMES_V1, SNAPSHOT_INTERVAL_SECONDS_V1
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -60,7 +64,14 @@ CATEGORY_MAP = {
     'Malign_HH': 2,
 }
 
-LABEL_CORRESPONDENCE = {str(v): k for k, v in CATEGORY_MAP.items()}
+LABEL_CORRESPONDENCE = {
+    "0": "normal_traffic",
+    "1": "benign_heavy_hitter",
+    "2": "malign_heavy_hitter",
+}
+IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SHA256_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
+REQUEST_TIMEOUT_SECONDS = 30
 
 # Columns to drop when extracting features (from notebook)
 NON_FEATURE_COLUMNS = [
@@ -80,13 +91,23 @@ NON_FEATURE_COLUMNS = [
 class AITraining:
     """Core AI Training service that trains, validates and publishes models."""
 
-    def __init__(self, catalog_url: str, catalog_index: str, data_path: str):
+    def __init__(
+        self,
+        catalog_url: str,
+        catalog_index: str,
+        data_path: str,
+        models_out_path: str,
+    ):
         LOGGER.info("Initializing AI Training Service...")
 
-        self.catalog_url = catalog_url if catalog_url.startswith("http") else f"http://{catalog_url}"
+        self.catalog_url = (
+            catalog_url.rstrip("/")
+            if catalog_url.startswith("http")
+            else f"http://{catalog_url.rstrip('/')}"
+        )
         self.catalog_index = catalog_index
         self.data_path = data_path
-        self.models_out_path = os.path.join(data_path, "models")
+        self.models_out_path = models_out_path
 
         LOGGER.info("AI Catalog URL: %s", self.catalog_url)
         LOGGER.info("Catalog index: %s", self.catalog_index)
@@ -106,9 +127,52 @@ class AITraining:
         Returns (features, labels).
         """
         cols_to_drop = [c for c in NON_FEATURE_COLUMNS if c in df.columns]
+        if "category" not in df.columns:
+            raise ValueError("dataset must contain a category column")
         features = df.drop(columns=cols_to_drop)
-        labels = df["category"].replace(CATEGORY_MAP)
-        return features, labels
+        missing = [name for name in FEATURE_NAMES_V1 if name not in features.columns]
+        extra = sorted(set(features.columns).difference(FEATURE_NAMES_V1))
+        if missing or extra:
+            raise ValueError(
+                f"dataset feature schema mismatch; missing={missing}, extra={extra}"
+            )
+        features = features.loc[:, list(FEATURE_NAMES_V1)]
+        if any(pd.api.types.is_bool_dtype(dtype) for dtype in features.dtypes):
+            raise ValueError("dataset features must be numeric, not boolean")
+        try:
+            features = features.apply(pd.to_numeric, errors="raise")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("dataset features must all be numeric") from exc
+        if not np.isfinite(features.to_numpy(dtype=float)).all():
+            raise ValueError("dataset features must all be finite")
+        labels = df["category"].apply(
+            lambda value: CATEGORY_MAP.get(value, value)
+        )
+        if labels.isna().any() or not labels.isin(CATEGORY_MAP.values()).all():
+            unknown = sorted(
+                {
+                    repr(value)
+                    for value in df.loc[
+                        ~labels.isin(CATEGORY_MAP.values()),
+                        "category",
+                    ]
+                }
+            )
+            raise ValueError(f"dataset contains unknown categories: {unknown}")
+        # Numeric CSV labels are commonly inferred as floats (0.0, 1.0, 2.0).
+        # Store the canonical integer class IDs so inference sees classes_
+        # exactly as declared by the model metadata.
+        return features, labels.astype("int64")
+
+    @staticmethod
+    def validate_training_classes(labels: pd.Series) -> None:
+        expected = set(CATEGORY_MAP.values())
+        observed = {int(label) for label in labels.unique()}
+        if observed != expected:
+            raise ValueError(
+                f"training data must contain class IDs {sorted(expected)}; "
+                f"found {sorted(observed)}"
+            )
 
     def load_dataset(self, dataset_id: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
@@ -118,6 +182,8 @@ class AITraining:
             {dataset_id}_validation.csv
         inside self.data_path.
         """
+        if not IDENTIFIER_PATTERN.fullmatch(dataset_id):
+            raise ValueError("dataset_id contains unsupported characters")
         train_path = os.path.join(self.data_path, f"{dataset_id}_training.csv")
         val_path = os.path.join(self.data_path, f"{dataset_id}_validation.csv")
 
@@ -143,6 +209,10 @@ class AITraining:
     def train_model(features: pd.DataFrame, labels: pd.Series,
                     n_estimators: int = 20) -> RandomForestClassifier:
         """Trains a RandomForestClassifier (mirrors notebook configuration)."""
+        if isinstance(n_estimators, bool) or not isinstance(n_estimators, int):
+            raise ValueError("n_estimators must be an integer")
+        if not 1 <= n_estimators <= 1000:
+            raise ValueError("n_estimators must be between 1 and 1000")
         LOGGER.info("Training RandomForest with %d estimators...", n_estimators)
 
         model = RandomForestClassifier(
@@ -217,27 +287,47 @@ class AITraining:
         with open(local_path, "rb") as f:
             file_content = base64.b64encode(f.read()).decode("ascii")
 
-        extension = model_desc.filename.rsplit(".", 1)[-1]
+        artifact = Path(local_path).read_bytes()
+        digest = hashlib.sha256(artifact).hexdigest()
+        metadata = dict(model_desc.metadata)
+        metadata.update({
+            "model": model_desc.filename,
+            "artifact_sha256": digest,
+            "input_schema": "nfstream-v1",
+            "feature_names": list(FEATURE_NAMES_V1),
+            "snapshot_interval_seconds": SNAPSHOT_INTERVAL_SECONDS_V1,
+            "training_library": {"scikit-learn": "1.0.2"},
+        })
 
         payload = {
             "file_data": {
                 "filename": model_desc.filename,
                 "file_content": file_content,
-                "content_type": f"file/{extension}",
+                "content_type": "application/octet-stream",
+                "size_bytes": len(artifact),
+                "sha256": digest,
             },
-            "metadata": model_desc.metadata,
+            "metadata": metadata,
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        api_url = f"{self.catalog_url}/{self.catalog_index}/_doc"
-        headers = {"Content-Type": "application/json"}
+        api_url = (
+            f"{self.catalog_url}/{quote(self.catalog_index, safe='')}/_doc/"
+            f"{digest}?refresh=wait_for"
+        )
 
         LOGGER.info("Uploading model to AI Catalog: %s", api_url)
 
         try:
-            response = requests.post(api_url, data=json.dumps(payload), headers=headers)
+            response = requests.put(
+                api_url,
+                json=payload,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
 
-            if response.status_code == 201:
-                doc_id = response.json().get("_id")
+            if response.status_code in (200, 201):
+                doc_id = response.json().get("_id", digest)
                 LOGGER.info("Model [%s] uploaded successfully. ID: %s",
                             model_desc.filename, doc_id)
                 return doc_id
@@ -250,36 +340,29 @@ class AITraining:
             return None
 
     # -------------------------------------------------------------------
-    # Retrieve existing model from AI Catalog (for retraining)
+    # Retrieve existing model metadata from AI Catalog (for retraining)
     # -------------------------------------------------------------------
-    def get_model_from_catalog(self, model_id: str) -> Tuple[Any, Dict]:
+    def get_model_metadata_from_catalog(self, model_id: str) -> Dict[str, Any]:
         """
-        Downloads an existing model from the AI Catalog by its document ID.
-        Returns (sklearn_model, metadata_dict).
+        Retrieves metadata for an existing model without deserializing it.
         """
-        api_url = f"{self.catalog_url}/{self.catalog_index}/_doc/{model_id}"
-        headers = {"Content-Type": "application/json"}
+        if not SHA256_PATTERN.fullmatch(model_id):
+            raise ValueError("model_id must be a SHA-256 document ID")
+        api_url = (
+            f"{self.catalog_url}/{quote(self.catalog_index, safe='')}/_doc/"
+            f"{quote(model_id, safe='')}?_source_includes=metadata"
+        )
 
         LOGGER.info("Retrieving model %s from AI Catalog...", model_id)
 
-        response = requests.get(api_url, headers=headers)
+        response = requests.get(api_url, timeout=REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
         result = response.json()
 
-        filename = result["_source"]["file_data"]["filename"]
-        file_content = result["_source"]["file_data"]["file_content"]
         metadata = result["_source"].get("metadata", {})
-
-        file_bytes = base64.b64decode(file_content.encode("utf-8"))
-        local_path = os.path.join(self.models_out_path, filename)
-
-        with open(local_path, "wb") as f:
-            f.write(file_bytes)
-
-        LOGGER.info("Model %s downloaded to %s", filename, local_path)
-
-        model = load(local_path)
-        return model, metadata
+        if not isinstance(metadata, dict):
+            raise ValueError("catalog model metadata must be an object")
+        return metadata
 
     # -------------------------------------------------------------------
     # High-level API Methods
@@ -300,6 +383,7 @@ class AITraining:
             # 2. Preprocess
             features_train, labels_train = self.preprocess_features(df_train)
             features_val, labels_val = self.preprocess_features(df_val)
+            self.validate_training_classes(labels_train)
 
             # 3. Train
             model = self.train_model(features_train, labels_train, n_estimators)
@@ -348,8 +432,12 @@ class AITraining:
             LOGGER.exception(msg)
             return msg, None
 
-    def retrain_model(self, model_id: str, new_dataset_id: str,
-                      n_estimators: int = 20) -> Tuple[str, Optional[str]]:
+    def retrain_model(
+        self,
+        model_id: str,
+        new_dataset_id: str,
+        n_estimators: int | None = None,
+    ) -> Tuple[str, Optional[str]]:
         """
         RetrainModel(model_id, new_dataset_id) → (status_message, retrained_model_id)
 
@@ -360,10 +448,17 @@ class AITraining:
 
         try:
             # 1. Retrieve existing model metadata from catalog
-            _, old_metadata = self.get_model_from_catalog(model_id)
+            old_metadata = self.get_model_metadata_from_catalog(model_id)
             old_params = old_metadata.get("params", {})
-            n_estimators = old_params.get("n_estimators", n_estimators)
-            LOGGER.info("Retraining with n_estimators=%d (from original model)", n_estimators)
+            estimator_source = "request override"
+            if n_estimators is None:
+                n_estimators = old_params.get("n_estimators", 20)
+                estimator_source = "original model metadata"
+            LOGGER.info(
+                "Retraining with n_estimators=%s (%s)",
+                n_estimators,
+                estimator_source,
+            )
 
             # 2. Load new data
             df_train, df_val = self.load_dataset(new_dataset_id)
@@ -371,6 +466,7 @@ class AITraining:
             # 3. Preprocess
             features_train, labels_train = self.preprocess_features(df_train)
             features_val, labels_val = self.preprocess_features(df_val)
+            self.validate_training_classes(labels_train)
 
             # 4. Train fresh model with same hyperparameters
             model = self.train_model(features_train, labels_train, n_estimators)
@@ -440,13 +536,23 @@ def create_app(training_service: AITraining) -> Flask:
         Request body:
             { "dataset_id": "ceos2_eth3_rev4", "n_estimators": 20 }
         """
-        body = request.get_json(force=True)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "request body must be a JSON object"}), 400
         dataset_id = body.get("dataset_id")
 
-        if not dataset_id:
-            return jsonify({"error": "dataset_id is required"}), 400
+        if not isinstance(dataset_id, str) or not dataset_id:
+            return jsonify({"error": "dataset_id must be a non-empty string"}), 400
+        if not IDENTIFIER_PATTERN.fullmatch(dataset_id):
+            return jsonify({"error": "dataset_id contains unsupported characters"}), 400
 
         n_estimators = body.get("n_estimators", 20)
+        if (
+            isinstance(n_estimators, bool)
+            or not isinstance(n_estimators, int)
+            or not 1 <= n_estimators <= 1000
+        ):
+            return jsonify({"error": "n_estimators must be an integer from 1 to 1000"}), 400
 
         status_message, new_model_id = training_service.initialize_model_training(
             dataset_id=dataset_id,
@@ -467,16 +573,35 @@ def create_app(training_service: AITraining) -> Flask:
         Request body:
             { "model_id": "abc123", "new_dataset_id": "ceos2_eth3_rev5", "n_estimators": 20 }
         """
-        body = request.get_json(force=True)
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"error": "request body must be a JSON object"}), 400
         model_id = body.get("model_id")
         new_dataset_id = body.get("new_dataset_id")
 
-        if not model_id:
-            return jsonify({"error": "model_id is required"}), 400
-        if not new_dataset_id:
-            return jsonify({"error": "new_dataset_id is required"}), 400
+        if not isinstance(model_id, str) or not model_id:
+            return jsonify({"error": "model_id must be a non-empty string"}), 400
+        if not SHA256_PATTERN.fullmatch(model_id):
+            return jsonify({"error": "model_id must be a SHA-256 document ID"}), 400
+        if not isinstance(new_dataset_id, str) or not new_dataset_id:
+            return jsonify(
+                {"error": "new_dataset_id must be a non-empty string"}
+            ), 400
+        if not IDENTIFIER_PATTERN.fullmatch(new_dataset_id):
+            return jsonify(
+                {"error": "new_dataset_id contains unsupported characters"}
+            ), 400
 
-        n_estimators = body.get("n_estimators", 20)
+        n_estimators = body.get("n_estimators")
+        if (
+            n_estimators is not None
+            and (
+                isinstance(n_estimators, bool)
+                or not isinstance(n_estimators, int)
+                or not 1 <= n_estimators <= 1000
+            )
+        ):
+            return jsonify({"error": "n_estimators must be an integer from 1 to 1000"}), 400
 
         status_message, retrained_model_id = training_service.retrain_model(
             model_id=model_id,
@@ -501,6 +626,7 @@ def main(args):
         catalog_url=args.catalog_url,
         catalog_index=args.catalog_index,
         data_path=args.data_path,
+        models_out_path=args.models_out_path,
     )
 
     app = create_app(training_service)
@@ -514,19 +640,25 @@ if __name__ == "__main__":
         description="AI Training Service — train, validate and publish ML models."
     )
     parser.add_argument(
-        "--catalog_url", type=str, default="http://localhost:9200",
-        help="URL of the AI Catalog (Elasticsearch). Default: http://localhost:9200"
+        "--catalog_url", type=str, default=os.getenv("CATALOG_URL", "http://ai-repository:9200"),
+        help="URL of the AI Catalog (Elasticsearch)."
     )
     parser.add_argument(
-        "--catalog_index", type=str, default="models",
+        "--catalog_index", type=str, default=os.getenv("CATALOG_INDEX", "models"),
         help="Elasticsearch index for storing models. Default: models"
     )
     parser.add_argument(
-        "--data_path", type=str, default="./data/",
+        "--data_path", type=str, default=os.getenv("DATA_PATH", "./data/"),
         help="Path to directory containing training/validation CSV files. Default: ./data/"
     )
     parser.add_argument(
-        "--port", type=int, default=5050,
+        "--models_out_path",
+        type=str,
+        default=os.getenv("MODELS_OUT_PATH", "./models/"),
+        help="Writable path for generated model artifacts. Default: ./models/",
+    )
+    parser.add_argument(
+        "--port", type=int, default=int(os.getenv("PORT", "5050")),
         help="Port for the Flask API server. Default: 5050"
     )
 

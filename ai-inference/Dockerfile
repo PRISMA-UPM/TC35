@@ -1,41 +1,32 @@
-FROM python:3.8.10
+FROM python:3.10.18-slim-bookworm
 
-ENV KAFKA_URL="localhost:9094"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    KAFKA_URL=kafka:9092 \
+    CATALOG_URL=http://ai-repository:9200 \
+    CONSUMER_TOPIC=inference_data \
+    PRODUCER_TOPIC=inference_probs \
+    CONSUMER_CLIENT_ID=ai-inference-consumer \
+    PRODUCER_CLIENT_ID=ai-inference-producer \
+    CONSUMER_GROUP_ID=ai-inference \
+    CATALOG_MODELS_INDEX=models \
+    INFERENCE_BATCH_SIZE=900 \
+    INFERENCE_IDLE_POLL_SECONDS=0.001 \
+    MODELS_PATH=/app/models
 
-ENV CATALOG_URL="localhost:9200"
+WORKDIR /app
 
-ENV CONSUMER_TOPIC="inference_data"
+COPY ai-inference/files/requirements.txt ./requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && python -m pip install --no-cache-dir -r requirements.txt
 
-ENV PRODUCER_TOPIC="inference_probs"
+COPY tc35_contract/ ./tc35_contract/
+COPY ai-inference/files/ai_inference.py ./
 
-ENV CONSUMER_CLIENT_ID="ai-inference-consumer"
+RUN useradd --create-home --uid 10001 tc35 \
+    && mkdir -p /app/models \
+    && chown -R tc35:tc35 /app
 
-ENV PRODUCER_CLIENT_ID="ai-inference-producer"
+USER tc35
 
-ENV CONSUMER_GROUP_ID="ai-inference"
-
-ENV CATALOG_MODELS_INDEX="models"
-
-ENV LOAD_MODEL="random_forest_train_ceos2_eth3_rev4_ronda1_t_lim_0.5s_20estimators_all.joblib"
-
-RUN apt-get update -y
-
-RUN python3 -m pip install --no-cache-dir --upgrade pip
-
-RUN python3 -m pip install --upgrade setuptools wheel pip-tools
-
-WORKDIR /usr/app/src
-
-COPY files/requirements.txt ./
-
-RUN python3 -m pip install -r requirements.txt
-
-COPY files/ai_inference.py ./
-
-COPY files/ai_inference_multiprocessing.py ./
-
-COPY files/ai_inference_buffer.py ./
-
-ENV TZ="Europe/Madrid"
-
-CMD python3 ./ai_inference_buffer.py --kafka_url=$KAFKA_URL --catalog_url=$CATALOG_URL --consumer_topic=$CONSUMER_TOPIC --producer_topic=$PRODUCER_TOPIC --consumer_client_id=$CONSUMER_CLIENT_ID --producer_client_id=$PRODUCER_CLIENT_ID --consumer_group_id=$CONSUMER_GROUP_ID --catalog_models_index=$CATALOG_MODELS_INDEX --load_model=$LOAD_MODEL
+CMD ["python", "./ai_inference.py"]

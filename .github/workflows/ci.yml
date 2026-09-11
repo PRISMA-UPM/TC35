@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Run unit and artifact tests
+        run: python -m unittest discover -s tests -v
+      - name: Validate base Compose file
+        run: docker compose config --quiet
+      - name: Validate live-capture override
+        env:
+          CAPTURE_INTERFACE: eth0
+        run: >-
+          docker compose
+          -f docker-compose.yml
+          -f docker-compose.live.yml
+          --profile live-capture
+          config --quiet
+      - name: Build every custom image
+        run: docker compose --profile capture --profile monitoring --profile training build
+      - name: Verify vendored nfmod uses the wheel native engine
+        run: >-
+          docker compose --profile capture run --rm --no-deps nfstream
+          python -c "import _lib_engine, nfmod; assert nfmod.__version__ == '6.5.3'"
+      - name: Exercise nfmod multiprocessing over a PCAP
+        run: >-
+          docker compose --profile capture run --rm --no-deps
+          --volume "$PWD/tests/smoke_nfmod.py:/tmp/smoke_nfmod.py:ro"
+          nfstream python /tmp/smoke_nfmod.py
+      - name: Start core stack
+        run: docker compose up -d
+      - name: Exercise inference and detection
+        run: python tests/smoke_pipeline.py
+      - name: Stop core stack
+        if: always()
+        run: docker compose down
