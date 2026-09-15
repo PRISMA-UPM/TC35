@@ -433,7 +433,7 @@ With the core stack running, exercise an actual Kafka inference-to-detector
 round trip from the host:
 
 ```sh
-python tests/smoke_pipeline.py
+python -m tests.smoke_pipeline
 ```
 
 CI builds every custom image, validates both Compose variants, runs the unit

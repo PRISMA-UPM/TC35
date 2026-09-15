@@ -19,7 +19,7 @@ packets = [
 ]
 packets[0].time = 1_700_000_000.0
 packets[1].time = 1_700_000_000.1
-wrpcap(capture_path, packets)
+wrpcap(str(capture_path), packets)
 
 streamer = NFStreamer(
     source=str(capture_path),
